@@ -58,3 +58,78 @@ def get_user(access_token: str) -> dict:
     resp = requests.get(GITHUB_API_USER, headers=headers, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
+
+# Higher-level helper to handle the local callback server and complete the flow.
+# This moves the HTTP server and waiting logic out of CLI command code.
+def complete_oauth_flow(client_id: str, client_secret: str, state: str, redirect_uri: str, port: int = 8000, timeout: int = 120):
+    """Start a temporary local HTTP server to receive the OAuth callback, exchange the
+    code for a token, and fetch the user. Returns (access_token, user_dict).
+
+    Raises RuntimeError on invalid state, missing code, or timeout. May raise
+    requests.HTTPError for HTTP errors during token exchange or user fetch.
+    """
+    import threading
+    import socketserver
+    from http.server import BaseHTTPRequestHandler
+    from urllib import parse as urlparse
+
+    result = {}
+    done = threading.Event()
+
+    class CallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse.urlparse(self.path)
+            if parsed.path != urlparse.urlparse(redirect_uri).path:
+                self.send_response(404)
+                self.end_headers()
+                return
+            qs = urlparse.parse_qs(parsed.query)
+            code = qs.get("code", [None])[0]
+            recv_state = qs.get("state", [None])[0]
+            if recv_state != state:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Invalid state parameter")
+                result["error"] = "invalid_state"
+                done.set()
+                return
+            result["code"] = code
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                b"<html><body><h1>Authentication complete</h1><p>You can close this window and return to the CLI.</p></body></html>"
+            )
+            done.set()
+
+        def log_message(self, format, *args):
+            # silence access logs
+            return
+
+    server = socketserver.TCPServer(("", port), CallbackHandler)
+    server.allow_reuse_address = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        if not done.wait(timeout):
+            raise RuntimeError("timeout waiting for OAuth callback")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    if "error" in result:
+        raise RuntimeError("invalid_state")
+
+    code = result.get("code")
+    if not code:
+        raise RuntimeError("no_code_received")
+
+    token = exchange_code_for_token(client_id, client_secret, code, redirect_uri)
+    if not token:
+        raise RuntimeError("failed_to_obtain_access_token")
+
+    user = get_user(token)
+    return token, user
