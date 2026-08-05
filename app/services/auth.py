@@ -1,30 +1,41 @@
-"""Minimal GitHub OAuth helpers used by the CLI commands.
-
-This module performs the HTTP calls for the OAuth flow so that CLI command code
-stays focused on user interaction and the temporary callback server.
-"""
-from typing import Iterable, Optional
-from urllib.parse import urlencode
+"""Authentication: OAuth flow, token management, and credentials storage."""
 import json
-import os
+import threading
+import socketserver
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from typing import Iterable, Optional
+from urllib import parse as urlparse
+from urllib.parse import urlencode
 
 import requests
 
-GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize"
-GITHUB_ACCESS_TOKEN = "https://github.com/login/oauth/access_token"
-GITHUB_API_USER = "https://api.github.com/user"
-GITHUB_REVOKE_TOKEN = "https://api.github.com/applications/{client_id}/token"
+from app.config import (
+    GITHUB_AUTHORIZE,
+    GITHUB_ACCESS_TOKEN,
+    GITHUB_API_USER,
+    GITHUB_REVOKE_TOKEN,
+    CREDENTIALS_DIR,
+    CREDENTIALS_FILE,
+)
 
-CREDENTIALS_DIR = Path.home() / ".atlas"
-CREDENTIALS_FILE = CREDENTIALS_DIR / "credentials.json"
+__all__ = [
+    "get_authorize_url",
+    "exchange_code_for_token",
+    "get_user",
+    "revoke_token",
+    "complete_oauth_flow",
+    "save_credentials",
+    "load_credentials",
+    "clear_credentials",
+    "is_logged_in",
+    "CREDENTIALS_FILE",
+]
 
 
-def get_authorize_url(client_id: str, redirect_uri: str, state: str, scopes: Iterable[str]):
-    """Build the GitHub authorization URL.
-
-    scopes is an iterable of scope strings.
-    """
+# OAuth flow functions
+def get_authorize_url(client_id: str, redirect_uri: str, state: str, scopes: Iterable[str]) -> str:
+    """Build GitHub authorization URL."""
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -35,11 +46,7 @@ def get_authorize_url(client_id: str, redirect_uri: str, state: str, scopes: Ite
 
 
 def exchange_code_for_token(client_id: str, client_secret: str, code: str, redirect_uri: str) -> Optional[str]:
-    """Exchange an authorization code for an access token.
-
-    Returns the access token string on success, or None on failure.
-    May raise requests.HTTPError for non-2xx responses.
-    """
+    """Exchange authorization code for access token."""
     headers = {"Accept": "application/json"}
     payload = {
         "client_id": client_id,
@@ -49,15 +56,11 @@ def exchange_code_for_token(client_id: str, client_secret: str, code: str, redir
     }
     resp = requests.post(GITHUB_ACCESS_TOKEN, data=payload, headers=headers, timeout=15)
     resp.raise_for_status()
-    data = resp.json()
-    return data.get("access_token")
+    return resp.json().get("access_token")
 
 
 def get_user(access_token: str) -> dict:
-    """Fetch the authenticated user's profile from the GitHub API.
-
-    Raises on HTTP errors.
-    """
+    """Fetch authenticated user's GitHub profile."""
     headers = {
         "Authorization": f"token {access_token}",
         "Accept": "application/vnd.github.v3+json",
@@ -68,68 +71,22 @@ def get_user(access_token: str) -> dict:
 
 
 def revoke_token(client_id: str, client_secret: str, access_token: str) -> bool:
-    """Revoke an access token with GitHub.
-
-    Returns True on success, False on failure.
-    May raise requests.HTTPError for non-2xx responses.
-    """
+    """Revoke an access token with GitHub."""
     url = GITHUB_REVOKE_TOKEN.format(client_id=client_id)
     headers = {"Accept": "application/vnd.github.v3+json"}
-    payload = {
-        "access_token": access_token,
-    }
+    payload = {"access_token": access_token}
     resp = requests.delete(url, auth=(client_id, client_secret), json=payload, headers=headers, timeout=10)
     resp.raise_for_status()
     return True
 
 
-def save_credentials(token: str, user: dict) -> None:
-    """Save credentials to local storage.
-
-    Creates ~/.atlas directory if it doesn't exist.
+def complete_oauth_flow(
+    client_id: str, client_secret: str, state: str, redirect_uri: str, port: int = 8000, timeout: int = 120
+) -> tuple[str, dict]:
+    """Run OAuth flow: start callback server, handle response, exchange code for token.
+    
+    Returns (access_token, user_dict). Raises RuntimeError on failure.
     """
-    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
-    data = {
-        "access_token": token,
-        "user": user.get("login"),
-    }
-    with open(CREDENTIALS_FILE, "w") as f:
-        json.dump(data, f)
-    os.chmod(CREDENTIALS_FILE, 0o600)
-
-
-def load_credentials() -> Optional[str]:
-    """Load stored access token. Returns None if not found."""
-    if not CREDENTIALS_FILE.exists():
-        return None
-    try:
-        with open(CREDENTIALS_FILE, "r") as f:
-            data = json.load(f)
-        return data.get("access_token")
-    except (json.JSONDecodeError, IOError):
-        return None
-
-
-def clear_credentials() -> None:
-    """Delete stored credentials."""
-    if CREDENTIALS_FILE.exists():
-        CREDENTIALS_FILE.unlink()
-
-
-# Higher-level helper to handle the local callback server and complete the flow.
-# This moves the HTTP server and waiting logic out of CLI command code.
-def complete_oauth_flow(client_id: str, client_secret: str, state: str, redirect_uri: str, port: int = 8000, timeout: int = 120):
-    """Start a temporary local HTTP server to receive the OAuth callback, exchange the
-    code for a token, and fetch the user. Returns (access_token, user_dict).
-
-    Raises RuntimeError on invalid state, missing code, or timeout. May raise
-    requests.HTTPError for HTTP errors during token exchange or user fetch.
-    """
-    import threading
-    import socketserver
-    from http.server import BaseHTTPRequestHandler
-    from urllib import parse as urlparse
-
     result = {}
     done = threading.Event()
 
@@ -160,8 +117,7 @@ def complete_oauth_flow(client_id: str, client_secret: str, state: str, redirect
             done.set()
 
         def log_message(self, format, *args):
-            # silence access logs
-            return
+            pass
 
     server = socketserver.TCPServer(("", port), CallbackHandler)
     server.allow_reuse_address = True
@@ -189,3 +145,39 @@ def complete_oauth_flow(client_id: str, client_secret: str, state: str, redirect
 
     user = get_user(token)
     return token, user
+
+
+# Credential storage functions
+def save_credentials(token: str, user: dict) -> None:
+    """Save token and user to ~/.atlas/credentials.json with secure permissions."""
+    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+    data = {
+        "access_token": token,
+        "user": user.get("login"),
+    }
+    with open(CREDENTIALS_FILE, "w") as f:
+        json.dump(data, f)
+    CREDENTIALS_FILE.chmod(0o600)
+
+
+def load_credentials() -> Optional[str]:
+    """Load stored access token. Returns None if not found."""
+    if not CREDENTIALS_FILE.exists():
+        return None
+    try:
+        with open(CREDENTIALS_FILE, "r") as f:
+            data = json.load(f)
+        return data.get("access_token")
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def clear_credentials() -> None:
+    """Delete stored credentials."""
+    if CREDENTIALS_FILE.exists():
+        CREDENTIALS_FILE.unlink()
+
+
+def is_logged_in() -> bool:
+    """Check if user has valid stored credentials."""
+    return load_credentials() is not None

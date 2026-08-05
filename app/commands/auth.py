@@ -1,31 +1,19 @@
+"""Authentication commands: login and logout."""
 import os
 import secrets
-import threading
-import socketserver
 import webbrowser
-from http.server import BaseHTTPRequestHandler
-from urllib import parse as urlparse
+
 import requests
 import typer
 from dotenv import load_dotenv
-from app.services import oauth
 
-# Load environment from .env if present
+from app.services import auth
+
 load_dotenv()
 
-app = typer.Typer()
 
-@app.command()
-def hello(name: str):
-    typer.echo(f"Hello, {name}")
-
-
-@app.command()
 def login(port: int = 8000, scopes: str = "read:user,user:email", no_browser: bool = False):
-    """Sign in with GitHub using OAuth.
-
-    Reads GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET from the environment or a .env file.
-    """
+    """Sign in with GitHub using OAuth."""
     client_id = os.environ.get("GITHUB_CLIENT_ID")
     client_secret = os.environ.get("GITHUB_CLIENT_SECRET")
     if not client_id or not client_secret:
@@ -40,7 +28,7 @@ def login(port: int = 8000, scopes: str = "read:user,user:email", no_browser: bo
     redirect_uri = f"http://localhost:{port}/callback"
     scope_list = [s.strip() for s in scopes.split(",") if s.strip()]
 
-    auth_url = oauth.get_authorize_url(client_id, redirect_uri, state, scope_list)
+    auth_url = auth.get_authorize_url(client_id, redirect_uri, state, scope_list)
 
     if no_browser:
         typer.secho("Open the following URL in your browser to authorize:", fg=typer.colors.GREEN)
@@ -51,9 +39,8 @@ def login(port: int = 8000, scopes: str = "read:user,user:email", no_browser: bo
 
     typer.secho("Waiting for response from GitHub...", fg=typer.colors.BLUE)
     try:
-        token, user = oauth.complete_oauth_flow(client_id, client_secret, state, redirect_uri, port=port, timeout=120)
+        token, user = auth.complete_oauth_flow(client_id, client_secret, state, redirect_uri, port=port, timeout=120)
     except RuntimeError as exc:
-        # Map service errors to exit codes similar to previous behavior
         msg = str(exc)
         if "timeout" in msg:
             raise typer.Exit(code=2)
@@ -73,18 +60,15 @@ def login(port: int = 8000, scopes: str = "read:user,user:email", no_browser: bo
         raise typer.Exit(code=5)
 
     typer.secho(f"Signed in as: {user.get('login')}", fg=typer.colors.GREEN)
-    oauth.save_credentials(token, user)
-    typer.secho(f"Credentials saved to {oauth.CREDENTIALS_FILE}", fg=typer.colors.CYAN)
+    auth.save_credentials(token, user)
+    typer.secho(f"Credentials saved to {auth.CREDENTIALS_FILE}", fg=typer.colors.CYAN)
 
 
-@app.command()
 def logout():
-    """Sign out by revoking the GitHub access token.
+    """Sign out and revoke GitHub access token."""
+    load_dotenv()
 
-    Reads stored credentials from ~/.atlas/credentials.json and requires
-    GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET from the environment or a .env file.
-    """
-    access_token = oauth.load_credentials()
+    access_token = auth.load_credentials()
     if not access_token:
         typer.secho("Not signed in. No credentials found.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=0)
@@ -100,7 +84,7 @@ def logout():
         raise typer.Exit(code=1)
 
     try:
-        oauth.revoke_token(client_id, client_secret, access_token)
+        auth.revoke_token(client_id, client_secret, access_token)
     except requests.HTTPError as exc:
         if exc.response.status_code == 404:
             typer.secho("Token not found or already revoked", fg=typer.colors.YELLOW)
@@ -111,5 +95,6 @@ def logout():
         typer.secho(f"Failed to revoke token: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    oauth.clear_credentials()
+    auth.clear_credentials()
     typer.secho("Successfully signed out", fg=typer.colors.GREEN)
+
