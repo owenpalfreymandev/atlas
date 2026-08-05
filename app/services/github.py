@@ -53,7 +53,7 @@ def get_repo_details(owner: str, repo: str):
     response = requests.get(f"{GITHUB_API}/repos/{owner}/{repo}", headers=headers, timeout=10)
     response.raise_for_status()
 
-    return response.json())
+    return response.json()
 
 
 def get_languages(owner: str, repo: str):
