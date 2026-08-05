@@ -5,12 +5,19 @@ stays focused on user interaction and the temporary callback server.
 """
 from typing import Iterable, Optional
 from urllib.parse import urlencode
+import json
+import os
+from pathlib import Path
 
 import requests
 
 GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize"
 GITHUB_ACCESS_TOKEN = "https://github.com/login/oauth/access_token"
 GITHUB_API_USER = "https://api.github.com/user"
+GITHUB_REVOKE_TOKEN = "https://api.github.com/applications/{client_id}/token"
+
+CREDENTIALS_DIR = Path.home() / ".atlas"
+CREDENTIALS_FILE = CREDENTIALS_DIR / "credentials.json"
 
 
 def get_authorize_url(client_id: str, redirect_uri: str, state: str, scopes: Iterable[str]):
@@ -58,6 +65,55 @@ def get_user(access_token: str) -> dict:
     resp = requests.get(GITHUB_API_USER, headers=headers, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
+
+def revoke_token(client_id: str, client_secret: str, access_token: str) -> bool:
+    """Revoke an access token with GitHub.
+
+    Returns True on success, False on failure.
+    May raise requests.HTTPError for non-2xx responses.
+    """
+    url = GITHUB_REVOKE_TOKEN.format(client_id=client_id)
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    payload = {
+        "access_token": access_token,
+    }
+    resp = requests.delete(url, auth=(client_id, client_secret), json=payload, headers=headers, timeout=10)
+    resp.raise_for_status()
+    return True
+
+
+def save_credentials(token: str, user: dict) -> None:
+    """Save credentials to local storage.
+
+    Creates ~/.atlas directory if it doesn't exist.
+    """
+    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+    data = {
+        "access_token": token,
+        "user": user.get("login"),
+    }
+    with open(CREDENTIALS_FILE, "w") as f:
+        json.dump(data, f)
+    os.chmod(CREDENTIALS_FILE, 0o600)
+
+
+def load_credentials() -> Optional[str]:
+    """Load stored access token. Returns None if not found."""
+    if not CREDENTIALS_FILE.exists():
+        return None
+    try:
+        with open(CREDENTIALS_FILE, "r") as f:
+            data = json.load(f)
+        return data.get("access_token")
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def clear_credentials() -> None:
+    """Delete stored credentials."""
+    if CREDENTIALS_FILE.exists():
+        CREDENTIALS_FILE.unlink()
 
 
 # Higher-level helper to handle the local callback server and complete the flow.
