@@ -2,6 +2,8 @@ import typer
 
 app = typer.Typer()
 
+units = ["KB", "MB", "GB", "TB", "PB" ]
+
 
 def format_topics(topics: list[str], max_topics: int = 5) -> str:
     shown = topics[:max_topics]
@@ -35,7 +37,31 @@ def format_size(size: int) -> str:
 
     return f"{size:.1f} {units[current_unit]}"
 
-units = ["KB", "MB", "GB", "TB", "PB" ]
+def format_languages(languages: dict[str, int], max_languages: int = 5) -> list[str]:
+    if not languages:
+        return ["No language data returned."]
+
+    total_bytes = sum(languages.values())
+
+    sorted_languages = sorted(
+        languages.items(),
+        key=lambda item: item[1],
+        reverse=True
+    )
+
+    shown = sorted_languages[:max_languages]
+    remaining = len(sorted_languages) - len(shown)
+
+    formatted = []
+
+    for language, byte_count in shown:
+        percent = (byte_count / total_bytes * 100) if total_bytes else 0
+        formatted.append(f"{language}: {percent:.1f}%")
+
+    if remaining > 0:
+        formatted.append(f"+ {remaining} more...")
+
+    return formatted
 
 
 @app.command()
@@ -88,7 +114,7 @@ def details(
     typer.echo("")
     typer.echo("Stats")
     typer.echo("-----------")
-    typer.echo(f"stars: {details.get('starsgazers_count') or 0}") # Stars
+    typer.echo(f"stars: {details.get('stargazers_count') or 0}") # Stars
     typer.echo(f"forks: {details.get("forks_count")}") # Forks
     typer.echo(f"issues: {details.get('open_issues_count') or 0}") # Issues
     typer.echo(f"size: {format_size(details.get('size'))}") # Size
@@ -99,16 +125,6 @@ def details(
     typer.echo("")
     typer.echo("Languages")
     typer.echo("---------")
-    total_bytes = sum(languages.values()) if languages else 0
-    if not languages:
-        typer.echo("No language data returned.")
-        return
 
-    # Convert the byte count into a percentage figure
-    for language, byte_count in sorted(languages.items(), key=lambda item: item[1], reverse=True):
-        percent = (byte_count / total_bytes * 100) if total_bytes else 0
-        typer.echo(f"{language}: {percent:.1f}% ({byte_count} bytes)")
-
-    topics = details.get("topics") or []
-    if topics:
-        typer.echo(f"topics: {format_topics(topics)}")
+    for language in format_languages(languages):
+        typer.echo(language)
