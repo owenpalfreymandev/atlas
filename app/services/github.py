@@ -71,3 +71,30 @@ def get_languages(owner: str, repo: str):
     response.raise_for_status()
 
     return response.json()
+
+
+def get_contributors(owner: str, repo: str):
+    token = get_token()
+
+    if not token:
+        raise RuntimeError("Not authenticated with GitHub. Run `auth login`.")
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+    response = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/contributors",
+        headers=headers,
+        params={"per_page": 100},
+        timeout=10,
+    )
+    response.raise_for_status()
+
+    return response.json()
+
+
+if __name__ == "__main__":
+    var = get_repo_details("owenpalfreymandev", "atlas")
+    print(var)
