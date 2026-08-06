@@ -1,12 +1,15 @@
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.columns import Columns
+
+from app.ui.avatar import get_profile_picture
 
 console = Console()
 
 
 def display_user(user: dict):
-    """Display a basic GitHub profile."""
+    """Display a GitHub profile with avatar."""
 
     title = user.get("name") or user["login"]
     subtitle = f"@{user['login']}"
@@ -22,11 +25,29 @@ def display_user(user: dict):
     profile.add_row("Company", user.get("company") or "—")
     profile.add_row("Joined", user["created_at"][:10])
 
+    profile_panel = Panel(
+        profile,
+        title=f"[bold]{title}[/bold]",
+        subtitle=subtitle,
+        expand=False,
+    )
+
+    avatar_panel = Panel(
+        get_profile_picture(user),
+        # Pixels does not report its natural width to Rich, so constrain this
+        # panel to the 28-column thumbnail plus its border and horizontal padding.
+        width=32,
+        padding=(0, 1),
+        expand=False,
+    )
+
     console.print(
-        Panel(
-            profile,
-            title=f"[bold]{title}[/bold]",
-            subtitle=subtitle,
+        Columns(
+            [
+                profile_panel,
+                avatar_panel,
+            ],
             expand=False,
+            equal=False,
         )
     )
