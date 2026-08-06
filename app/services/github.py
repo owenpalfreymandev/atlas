@@ -93,8 +93,3 @@ def get_contributors(owner: str, repo: str):
     response.raise_for_status()
 
     return response.json()
-
-
-if __name__ == "__main__":
-    var = get_repo_details("owenpalfreymandev", "atlas")
-    print(var)
