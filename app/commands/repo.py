@@ -22,8 +22,20 @@ def format_description(description: str, max_chars: int = 90) -> str:
         cutoff = len(description)
 
     shown = description[:cutoff].rstrip()
-    remaining = len(description) - len(shown)
     return (f"{shown}...")
+
+def format_size(size: int) -> str:
+    units = ["KB", "MB", "GB", "TB", "PB"]
+
+    current_unit = 0
+
+    while size >= 1000 and current_unit < len(units) - 1:
+        size = size / 1000
+        current_unit += 1
+
+    return f"{size:.1f} {units[current_unit]}"
+
+units = ["KB", "MB", "GB", "TB", "PB" ]
 
 
 @app.command()
@@ -79,7 +91,7 @@ def details(
     typer.echo(f"stars: {details.get('starsgazers_count') or 0}") # Stars
     typer.echo(f"forks: {details.get("forks_count")}") # Forks
     typer.echo(f"issues: {details.get('open_issues_count') or 0}") # Issues
-    typer.echo(f"size: {details.get("size")}") # Size
+    typer.echo(f"size: {format_size(details.get('size'))}") # Size
 
     # TODO: Contributions
 
