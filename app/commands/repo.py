@@ -3,6 +3,29 @@ import typer
 app = typer.Typer()
 
 
+def format_topics(topics: list[str], max_topics: int = 5) -> str:
+    shown = topics[:max_topics]
+    remaining = len(topics) - len(shown)
+    rendered = ", ".join(shown)
+    if remaining > 0:
+        rendered = f"{rendered} + {remaining} more..."
+    return rendered
+
+
+def format_description(description: str, max_chars: int = 90) -> str:
+    if len(description) <= max_chars:
+        return description
+
+    # Truncate at or after max_chars, but never in the middle of a word.
+    cutoff = description.find(" ", max_chars)
+    if cutoff == -1:
+        cutoff = len(description)
+
+    shown = description[:cutoff].rstrip()
+    remaining = len(description) - len(shown)
+    return (f"{shown}...")
+
+
 @app.command()
 def list():
     """See a list of all your repos."""
@@ -12,7 +35,8 @@ def list():
 
     for repo in repos:
         typer.echo(f"{repo['full_name']}")
-        typer.echo(f"description: {repo.get('description') or '—'}")
+        description = repo.get("description") or "—"
+        typer.echo(f"description: {format_description(description)}")
         typer.echo(f"visibility: {repo.get('visibility') or ('private' if repo.get('private') else 'public')}")
         typer.echo(f"language: {repo.get('language') or '—'}")
         typer.echo(f"default branch: {repo.get('default_branch') or '—'}")
@@ -21,7 +45,7 @@ def list():
 
         topics = repo.get("topics") or []
         if topics:
-            typer.echo(f"  topics: {', '.join(topics)}")
+            typer.echo(f"  topics: {format_topics(topics)}")
 
         typer.echo("")
 
@@ -41,7 +65,8 @@ def details(
     typer.echo("Repository")
     typer.echo("-----------")
     typer.echo(f"{details.get('full_name', f'{owner}/{repo}')}") # Name
-    typer.echo(f"description: {details.get('description') or '—'}") # Description
+    description = details.get("description") or "—"
+    typer.echo(f"description: {format_description(description)}") # Description
     typer.echo(
         f"visibility: {details.get('visibility') or ('private' if details.get('private') else 'public')}" # Visibility
     )
@@ -51,10 +76,12 @@ def details(
     typer.echo("")
     typer.echo("Stats")
     typer.echo("-----------")
-    typer.echo(f"stars: {details.get('stars') or 0}") # Stars
-    typer.echo(f"forks: {details.get("forks")}") # Forks
-    typer.echo(f"issues: {details.get('issues') or 0}") # Issues
+    typer.echo(f"stars: {details.get('starsgazers_count') or 0}") # Stars
+    typer.echo(f"forks: {details.get("forks_count")}") # Forks
+    typer.echo(f"issues: {details.get('open_issues_count') or 0}") # Issues
     typer.echo(f"size: {details.get("size")}") # Size
+
+    # TODO: Contributions
 
     # Tech
     typer.echo("")
@@ -72,4 +99,4 @@ def details(
 
     topics = details.get("topics") or []
     if topics:
-        typer.echo(f"topics: {', '.join(topics)}")
+        typer.echo(f"topics: {format_topics(topics)}")
