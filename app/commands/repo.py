@@ -94,10 +94,11 @@ def details(
     repo: str = typer.Argument(..., help="Repository name, e.g. atlas"),
 ):
     """Gain insights into your repo"""
-    from app.services.github import get_repo_details, get_languages
+    from app.services.github import get_repo_details, get_languages, get_top_contributors
 
     details = get_repo_details(owner, repo)
     languages = get_languages(owner, repo)
+    contributions = get_top_contributors(owner, repo, limit=5)
 
     # Repo Details
     typer.echo("Repository")
@@ -119,7 +120,16 @@ def details(
     typer.echo(f"issues: {details.get('open_issues_count') or 0}") # Issues
     typer.echo(f"size: {format_size(details.get('size'))}") # Size
 
-    # TODO: Contributions
+    typer.echo("")
+    typer.echo("Contributions")
+    typer.echo("-----------")
+    if not contributions:
+        typer.echo("No contributor data returned.")
+    else:
+        for contributor in contributions:
+            typer.echo(
+                f"{contributor['login']}: {contributor['commits']} commits"
+            )
 
     # Tech
     typer.echo("")
