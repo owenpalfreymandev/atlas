@@ -1,95 +1,133 @@
+import time
 import requests
 
 from app.services.storage import get_token
+from app.services.github_errors import (
+    github_headers,
+    raise_for_github_error,
+)
+
 
 GITHUB_API = "https://api.github.com"
 
+TOP_CONTRIBUTORS = 10
+STATS_POLL_ATTEMPTS = 5
+STATS_POLL_INTERVAL_SECONDS = 1
 
-def get_authenticated_user():
+
+def _get_auth_headers():
     token = get_token()
 
     if not token:
-        raise RuntimeError("Not authenticated with GitHub. Run `auth login`.")
+        raise RuntimeError(
+            "Not authenticated with GitHub. Run `auth login`."
+        )
 
-    headers = {
-        "Authorization": f"token {token}", # This header is used to authenticate the request with the GitHub API using the personal access token
-        "Accept": "application/vnd.github.v3+json" # This header is used to specify the version of the GitHub API we want to use
-    }
+    return github_headers(token)
 
-    response = requests.get(f"{GITHUB_API}/user", headers=headers, timeout=10)
-    response.raise_for_status() # Raises an exception if the request was unsuccessful
+
+def get_authenticated_user():
+    response = requests.get(
+        f"{GITHUB_API}/user",
+        headers=_get_auth_headers(),
+        timeout=10,
+    )
+
+    raise_for_github_error(response)
 
     return response.json()
 
 
 def get_user_repos():
-    token = get_token()
+    response = requests.get(
+        f"{GITHUB_API}/user/repos",
+        headers=_get_auth_headers(),
+        timeout=10,
+    )
 
-    if not token:
-        raise RuntimeError("Not authenticated with GitHub. Run `auth login`.")
-
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-
-    response = requests.get(f"{GITHUB_API}/user/repos", headers=headers, timeout=10) 
-    response.raise_for_status()
+    raise_for_github_error(response)
 
     return response.json()
 
 
 def get_repo_details(owner: str, repo: str):
-    token = get_token()
+    response = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}",
+        headers=_get_auth_headers(),
+        timeout=10,
+    )
 
-    if not token:
-        raise RuntimeError("Not authenticated with GitHub. Run `auth login`.")
-
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-
-    response = requests.get(f"{GITHUB_API}/repos/{owner}/{repo}", headers=headers, timeout=10)
-    response.raise_for_status()
+    raise_for_github_error(response)
 
     return response.json()
 
 
 def get_languages(owner: str, repo: str):
-    token = get_token()
-
-    if not token:
-        raise RuntimeError("Not authenticated with GitHub. Run `auth login`.")
-
-    headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-
-    response = requests.get(f"{GITHUB_API}/repos/{owner}/{repo}/languages", headers=headers, timeout=10)
-    response.raise_for_status()
-
-    return response.json()
-
-
-def get_contributors(owner: str, repo: str):
-    token = get_token()
-
-    if not token:
-        raise RuntimeError("Not authenticated with GitHub. Run `auth login`.")
-
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-
     response = requests.get(
-        f"{GITHUB_API}/repos/{owner}/{repo}/contributors",
-        headers=headers,
-        params={"per_page": 100},
+        f"{GITHUB_API}/repos/{owner}/{repo}/languages",
+        headers=_get_auth_headers(),
         timeout=10,
     )
-    response.raise_for_status()
+
+    raise_for_github_error(response)
 
     return response.json()
+
+
+def get_top_contributors(
+    owner: str,
+    repo: str,
+    limit: int = TOP_CONTRIBUTORS,
+) -> list[dict[str, str | int | None]]:
+    """
+    Return contributors ranked by commit count.
+
+    GitHub may return 202 while it calculates statistics,
+    so we retry until the data is available.
+    """
+
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+
+    url = (
+        f"{GITHUB_API}/repos/"
+        f"{owner}/{repo}/stats/contributors"
+    )
+
+    for attempt in range(STATS_POLL_ATTEMPTS):
+        response = requests.get(
+            url,
+            headers=_get_auth_headers(),
+            timeout=10,
+        )
+
+        if response.status_code == 202:
+            if attempt < STATS_POLL_ATTEMPTS - 1:
+                time.sleep(STATS_POLL_INTERVAL_SECONDS)
+                continue
+
+            raise RuntimeError(
+                "GitHub is still computing contributor statistics. "
+                "Try again shortly."
+            )
+
+        raise_for_github_error(response)
+
+        contributors = sorted(
+            response.json(),
+            key=lambda contributor: contributor["total"],
+            reverse=True,
+        )[:limit]
+
+        return [
+            {
+                "login": contributor["author"]["login"],
+                "commits": contributor["total"],
+                "profile_url": contributor["author"]["html_url"],
+                "avatar_url": contributor["author"]["avatar_url"],
+            }
+            for contributor in contributors
+            if contributor["author"] is not None
+        ]
+
+    return []
